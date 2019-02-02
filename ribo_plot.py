@@ -1,3 +1,22 @@
+'''
+    Script to plot ribosome profiling analysis
+    Copyright (C) 2019  Fuad Mohammad, fuadm424@gmail.com
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+    
+'''
+
 import pandas as pd
 import numpy as np
 import math 
@@ -12,6 +31,7 @@ import cPickle as pickle
 import seaborn as sns
 import matplotlib.pyplot as plt
 from IPython.display import display
+from scipy import stats
 
 import ribo_util
 
@@ -109,6 +129,8 @@ def read_comp_context(inputs, paths_in, paths_out):
             df = ribo_util.heatmapdict_to_df(data, 'Length', 'Position', 'composition')
             plt.subplot(1,4,plot_num)
             plot = sns.heatmap(df, cmap = "RdBu_r", vmin = 0, vmax = 50)
+            
+            plot.set_xlim([0,10])
 
             plt.setp(plot.get_xticklabels(), visible=False)
             plt.setp(plot.get_xticklabels()[0::5], visible=True)
@@ -238,6 +260,7 @@ def plot_avggene(inputs, paths_in, paths_out, settings, settings_plot):
         plot_num = 0
         
         sns.set_style("white")
+        sns.set_style("ticks")
         plt.figure(figsize=(20,5))
         path_analysis = paths_out['path_analysis'] + fname + '/avggenes/'
         
@@ -252,8 +275,8 @@ def plot_avggene(inputs, paths_in, paths_out, settings, settings_plot):
         data_stop  = ribo_util.dict_to_df(data_stop, 'Position', 'Reads')
         data_startHM = ribo_util.heatmapdict_to_df(data_startHM, 'Length', 'Position', 'composition')
         data_stopHM  = ribo_util.heatmapdict_to_df(data_stopHM, 'Length', 'Position', 'composition')
-        
-        
+         
+        X = range(-50, 151)
         data_startHM = data_startHM.reindex(index=data_startHM.index[::-1])
         data_stopHM  = data_stopHM.reindex(index=data_stopHM.index[::-1])
         
@@ -284,6 +307,7 @@ def plot_avggene(inputs, paths_in, paths_out, settings, settings_plot):
             plt.ylim(0, ymax)
             plt.xlim(0, xmax)
             sns.despine()
+            
         for graph in ['startHM', 'stopHM']:
             plot_num += 1
             if graph == 'startHM':
@@ -299,7 +323,7 @@ def plot_avggene(inputs, paths_in, paths_out, settings, settings_plot):
             plt.setp(plot.get_yticklabels(), visible=False)
             plt.setp(plot.get_yticklabels()[0::4], visible=True)
     
-    plt.savefig(path_figure + fname + '/avggene_' + name_settings + '.pdf', dpi=400)
+        plt.savefig(path_figure + fname + '/avggene_' + name_settings + '.pdf', dpi=400)
     plt.show()
     
     
@@ -507,7 +531,7 @@ def plot_pausescore(inputs, paths_in, paths_out, settings, settings_plot):
             sns.set_context("talk")
             plt.figure(figsize=(8 + 4 * aa_plots,5))
             plt.subplot2grid((2,2 + aa_plots), (0,0), rowspan=2, colspan=2)
-            plot = sns.stripplot(x="Amino Acid", y="A_site", data=aa_df, size = 12)
+            plot = sns.stripplot(x="Amino Acid", y="A_site", data=aa_df, size = 13, color= 'black')
             plot = sns.stripplot(x="Amino Acid", y="P_site", data=aa_df, size = 6, color = 'black')
             plot = sns.stripplot(x="Amino Acid", y="E_site", data=aa_df, size = 6, color = 'grey')
             #sns.despine(offset=5, trim = True )
@@ -556,7 +580,7 @@ def plot_pausescore(inputs, paths_in, paths_out, settings, settings_plot):
                 plotnum +=1
 
             plt.tight_layout()
-            plt.savefig(path_figure + fname + '/aa_pausescore' + name_settings + '_aa_pause_scores.png', dpi=400)
+            plt.savefig(path_figure + fname + '/aa_pausescore' + name_settings + '_aa_pause_scores.pdf', dpi=400)
             plt.show()
             
             aa_plot_csv = pd.DataFrame(aa_plot)
@@ -584,9 +608,9 @@ def plot_pausescore(inputs, paths_in, paths_out, settings, settings_plot):
             plt.figure(figsize=(28 + 4 * codon_plots,5))
             plt.subplot2grid((2,7 + codon_plots), (0,0), rowspan=2, colspan=7)
             
-            plot = sns.stripplot(x="Codon", y="A_site", data=codon_df, size = 12)
-            plot = sns.stripplot(x="Codon", y="P_site", data=codon_df, size = 6, color = 'black')
-            plot = sns.stripplot(x="Codon", y="E_site", data=codon_df, size = 6, color = 'grey')
+            plot = sns.stripplot(x="Codon", y="A_site", data=codon_df, size = 10, color = 'black')
+            plot = sns.stripplot(x="Codon", y="P_site", data=codon_df, size = 2, color = 'black')
+            plot = sns.stripplot(x="Codon", y="E_site", data=codon_df, size = 2, color = 'grey')
             #sns.despine(offset=5, trim = True )
             plt.ylim(0, ymax_dot)
             plot.axhline(y=1, xmin=0, xmax=1, dashes=[2, 2, 2, 2], color = 'grey') 
@@ -743,8 +767,15 @@ def plot_asymmetry_comp(inputs, paths_in, paths_out, settings):
     
     plot_count = 0
     fnames = ''
+    cm_treated = ['CW63', 'OL38', 'OL34', 'OL35', 'OL18', 'OL19', 'OL20', 'OL21', 'OL1', 'OL2']
+    cm_untreated = ['OL' + str(i) for i in range(0, 40)]
+    
+    treated_mean = []
+    untreated_mean = []
     
     for fname in files:
+        
+            
         fnames += fname
         plot_count += 1
 
@@ -752,15 +783,31 @@ def plot_asymmetry_comp(inputs, paths_in, paths_out, settings):
         asymmetry_dict  = ribo_util.unPickle(path_analysis + 'asymmetry') 
         df = pd.DataFrame(asymmetry_dict)
         
-        score = df['Score'].values.tolist()
+        compare_path = paths_out['path_analysis'] + 'OL17' + '/'
+        compare_dict  = ribo_util.unPickle(compare_path + 'asymmetry') 
+        compare_df = pd.DataFrame(compare_dict)
         
+        score = df['Score'].values.tolist()
+        compare_score = compare_df['Score'].values.tolist()
+        
+        ttest = stats.ttest_ind(score, compare_score )
+        ttest2 = stats.ttest_1samp(score, 0 )
+        
+        mean = np.mean(score) 
+        
+        if fname in cm_treated:
+            treated_mean.append(mean)
+        elif fname in cm_untreated:
+            untreated_mean.append(mean)
+                
         for value in score: 
             fname_list.append(fname)
             score_list.append(value)
-        
+    
     data['file'] = fname_list
     data['score'] = score_list
     data = pd.DataFrame(data)
+    
     
     sns.set_style("white")
     plot = plt.figure(figsize=(3,12))
@@ -771,6 +818,21 @@ def plot_asymmetry_comp(inputs, paths_in, paths_out, settings):
     plt.savefig(path_figure + 'asymmetry/' + fnames + name_settings + '.pdf', dpi=400, bbox_inches="tight") 
 
     plt.show()
+    
+    plot2 = sns.distplot(treated_mean, bins=5)
+    plot2 = sns.distplot(untreated_mean, bins=5)
+    plt.show()
+    
+    ttest = stats.ttest_ind(treated_mean, untreated_mean )
+    
+    print ttest
+    print 'number of genes in treated = ' + str(len(treated_mean))
+    print 'number of genes in untreated = ' + str(len(untreated_mean))
+    print
+    print 'treated = ' , treated_mean
+    print
+    print 'untreated = ' , untreated_mean
+
 
 def plot_genelist(fnamelist, paths_in, paths_out, settings):
     '''Takes 2 files and compares gene RPKM values'''
@@ -782,6 +844,7 @@ def plot_genelist(fnamelist, paths_in, paths_out, settings):
     foldchange      = settings['foldchange']
     highlight_genes = settings['interesting']
     data_transform  = settings['data_transform'] # has to be 'None', 'log10', or 'log2' 
+    highlight_genes = settings['annotation']
     
     '''Load Data'''
     
@@ -793,12 +856,14 @@ def plot_genelist(fnamelist, paths_in, paths_out, settings):
     genelist_f2 = ribo_util.unPickle(path_analysis2 + 'genelist') 
 
     #define alias and RPKM as arrays
-    df1      = pd.DataFrame(genelist_f1)
-    alias    = df1.Alias
-    RPKM_f1  = df1.RPKM
+    df1           = pd.DataFrame(genelist_f1)
+    alias         = df1.Alias
+    RPKM_f1       = df1.RPKM
+    annotation_f1 = df1.Annotation
     
-    df2 = pd.DataFrame(genelist_f2)
-    RPKM_f2   = df2.RPKM
+    df2           = pd.DataFrame(genelist_f2)
+    RPKM_f2       = df2.RPKM
+    annotation_f2 = df2.Annotation
     
     '''data arrays to plot'''
     xydict = {}
@@ -810,10 +875,13 @@ def plot_genelist(fnamelist, paths_in, paths_out, settings):
     interestingdict = {}
     x_interesting = []
     y_interesting = []
+    annotateddict = {}
+    x_annotated = []
+    y_annotated = []
         
     '''iterate through gene data for manipulation (log transform and fold change calc)'''    
     
-    for alias, xval, yval in itertools.izip(alias.values, RPKM_f1.values, RPKM_f2.values):
+    for alias, xval, yval, annotation in itertools.izip(alias.values, RPKM_f1.values, RPKM_f2.values, annotation_f1.values):
         
         # remove genes with RPKM = 0
         if xval == 0 or yval == 0:
@@ -841,10 +909,18 @@ def plot_genelist(fnamelist, paths_in, paths_out, settings):
         if foldchange_val > foldchange or foldchange_val < (1 / foldchange):
             x_foldchange.append(xval)
             y_foldchange.append(yval)
-            
+        
         if alias in settings['interesting']:
             x_interesting.append(xval)
             y_interesting.append(yval)
+            
+            print alias, xval, yval
+                        
+        if annotation == highlight_genes:
+            x_annotated.append(xval)
+            y_annotated.append(yval)
+            
+            print alias, xval, yval
     
     # convert lists to pd.dataframe
     
@@ -860,11 +936,17 @@ def plot_genelist(fnamelist, paths_in, paths_out, settings):
     interestingdict[file2] = y_interesting
     interesting_df = pd.DataFrame(interestingdict)
     
+    annotateddict[file1] = x_annotated
+    annotateddict[file2] = y_annotated
+    annotated_df = pd.DataFrame(annotateddict)
+    
+    display(annotated_df)
+    
     sns.set_style("white")
-    plt.figure(figsize=(4,4))
+    plt.figure(figsize=(6,6))
 
     plot1 = sns.regplot(x = file1, y = file2, data = xy_df, 
-                            color=".1", marker='.')
+                            color=".5", marker='.', fit_reg = False)
     
     #plot1.set_axis_labels(fnamelist[0] + ' log2(RPKM)', fnamelist[1] + ' log2(RPKM)')
     
@@ -873,18 +955,89 @@ def plot_genelist(fnamelist, paths_in, paths_out, settings):
         
     #plot1.plot_joint(plt.scatter, marker='.', c='r', alpha = .4)
     
-    plot1.x = interesting_df[file1]
-    plot1.y = interesting_df[file2]
+    x = interesting_df[file1]
+    y = interesting_df[file2]
     
-    #plot1.plot_joint(plt.scatter, marker='.', c='b', alpha = .8)
+    plot1 = sns.regplot(x = x, y = y, color="blue", marker='.', fit_reg = False)
+    
+    x = annotated_df[file1]
+    y = annotated_df[file2]
+    
+    plot1 = sns.regplot(x = x, y = y, color="red", marker='.', fit_reg = False)
+    
+    x = xy_df[file1]
+    y = xy_df[file1]
+    
+    plot1 = sns.regplot(x = x, y = y, color="black", marker="None")
+    
+    plot2 = sns.jointplot(x = file1, y = file2, data = xy_df, 
+                            color=".5", marker='.', kind="reg")
+    plot2 = plot2.annotate(stats.pearsonr)
 
-    plt.savefig(path_figure + 'RPKM_Cm_media_plot.pdf', dpi=400, bbox_inches="tight") 
+    plt.savefig(path_figure + file1 + '_' + file2 + '.pdf', dpi=400, bbox_inches="tight") 
+    
 
     plt.show()
     
     
+def plot_UTRvsCDS(inputs, paths_in, paths_out, settings, settings_plot):
+    
+    files = inputs['files']
+    path_figure = paths_out['path_figures']
+    
+    minlength      = settings['minlength']
+    maxlength      = settings['maxlength']
+    length_in_ORF  = settings['length_in_ORF']
+    length_out_ORF = settings['length_out_ORF']
+    density_type   = settings['density_type'] 
+    next_gene      = settings['next_gene']
+    equal_weight   = settings['equal_weight']
+    threshold      = settings['threshold']
+    
+    minlength_1      = str(minlength)     +'_'
+    maxlength_1      = str(maxlength)     +'_'
+    length_in_ORF_1  = str(length_in_ORF) +'_'
+    length_out_ORF_1 = str(length_out_ORF)+'_'
+    density_type_1   = density_type       +'_'
+    next_gene_1      = str(next_gene)     +'_'
+    equal_weight_1   = equal_weight       +'_'
+    threshold_1      = str(threshold)     +'_'
+    
+    name_settings = length_in_ORF_1+length_out_ORF_1+next_gene_1+threshold_1
+    name_settings += density_type_1+equal_weight_1+minlength_1+maxlength_1
+    
+    all_data = {}
+    sns.set_style("white")
+    plot = plt.figure(figsize=(5,5))
+    
+    for fname in files: 
+        
+        path_analysis = paths_out['path_analysis'] + fname + '/avggenes/'
+        
+        data = ribo_util.unPickle(path_analysis + 'avg_start_'+ name_settings + '_UTR_CDS')
+        #all_data[fname] = data.values()
+        
+        total_values = len(data.values())
+        sum_values   = sum(data.values())
+        
+        print fname, total_values
+        
+        df_sort = [ i / sum_values for i in data.values()]              
+        df = pd.Series(data.values())
+        df = df.sort_values(ascending=True)
+        
+        plot = plt.hist(df, total_values, normed=1, histtype='step',cumulative=True, label = fname)
+        plt.xlim(-1, 2)
+        
+        plt.legend(loc='right')
+        
+    plt.show()
     
     
+    '''all_data = pd.DataFrame(all_data)
+    plot = plt.figure(figsize=(5,5))
+    plot = sns.kdeplot(all_data, cumulative=True)'''
+        
     
     
     

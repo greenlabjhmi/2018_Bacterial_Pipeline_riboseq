@@ -1,3 +1,23 @@
+'''
+    Script to filter, align and 3' map ribosome footprints
+    Copyright (C) 2019  Fuad Mohammad, fuadm424@gmail.com
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+    
+'''
+
+
 from datetime import datetime
 from multiprocessing import Process
 import os, time
@@ -225,7 +245,7 @@ def run_align(inputs, paths_in, paths_out): # all arguments = dict
 ############################
 
 
-def density_3(fname, chr_sam, minlength, maxlength, path_wig, path_den, path_gff):
+def density_3(fname, chr_sam, minlength, maxlength, path_wig, path_den, path_gff, data_type):
     '''Density will be a size separated dictionary = {length : [reads at 0, reads at 1, ....]}
         this makes it easier to select a size range later for analysis'''    
     
@@ -234,6 +254,14 @@ def density_3(fname, chr_sam, minlength, maxlength, path_wig, path_den, path_gff
     minlength = minlength
     maxlength = maxlength
     GFFgen = GFF.parse(path_gff)
+    data_type = data_type
+    
+    if data_type == 'ribo_seq':
+        plus_strand  = '0'
+        minus_strand = '16'
+    else:
+        plus_strand  = '16'
+        minus_strand = '0'
 
     # open chr aligned sam file
     f_samfile = open(chr_sam)
@@ -257,7 +285,7 @@ def density_3(fname, chr_sam, minlength, maxlength, path_wig, path_den, path_gff
     for length in range(minlength, maxlength + 1):
         density_plus_sizesep[length]  = [0 for x in range(len(sequence))]
         density_minus_sizesep[length] = [0 for x in range(len(sequence))]
-
+        
     total_reads = 0
     mapped_reads = 0
 
@@ -283,19 +311,19 @@ def density_3(fname, chr_sam, minlength, maxlength, path_wig, path_den, path_gff
         # Note that Bowtie reverse complements any sequence aligning to the reverse strand.  
         # and so read[3] is the 3'-end of minus strand reads 
 
-        # Filter to get rid of reads of particular length. Or a particular strand.
+        # Filter to get rid of reads of particular length
         if (length < minlength or length > maxlength):
             continue
 
         mapped_reads += 1
 
         # 16 is the minus strand, 0 is the plus strand
-        if (read[1] == '16'):
+        if (read[1] == minus_strand):
             start = startp
             density_minus[chrom][start] += 1 
             density_minus_sizesep[length][start] += 1 
 
-        if (read[1] == '0'):
+        if (read[1] == plus_strand):
             start = startp + length - 1
             density_plus[chrom][start] += 1 
             density_plus_sizesep[length][start] += 1 
@@ -325,6 +353,7 @@ def run_density(inputs, paths_in, paths_out): # all arguments = dict
     minlength = inputs['minlength']
     maxlength = inputs['maxlength']
     threads   = inputs['threads'] 
+    data_type = inputs['data_type']
     
     if not files:
         print("There are no files")
@@ -365,7 +394,7 @@ def run_density(inputs, paths_in, paths_out): # all arguments = dict
             inputs['files'].remove(fname)
             continue
        
-        argument = [fname, path_sam, minlength, maxlength, path_wig, path_den, path_gff]
+        argument = [fname, path_sam, minlength, maxlength, path_wig, path_den, path_gff, data_type]
         arguments.append(argument)
     
     ribo_util.multiprocess(density_3, arguments, threads)
@@ -379,7 +408,9 @@ def run_density(inputs, paths_in, paths_out): # all arguments = dict
     
 def density_adjusted(fname, chr_sam, minlength, maxlength, path_wig, path_den, path_gff):
     '''Density will be a size separated dictionary = {length : [reads at 0, reads at 1, ....]}
-        this makes it easier to select a size range later for analysis'''    
+        this makes it easier to select a size range later for analysis
+        
+        adjusted: will shift reads larger than 24 to alignn 3' end'''    
     
     fname = fname
     chr_sam = chr_sam

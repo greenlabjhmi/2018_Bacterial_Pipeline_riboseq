@@ -1,3 +1,22 @@
+'''
+    Misc utilities to process and analyze profiling data
+    Copyright (C) 2019  Fuad Mohammad, fuadm424@gmail.com
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+    
+'''
+
 from datetime import datetime
 from multiprocessing import Process, Pool
 import os, time
@@ -31,6 +50,7 @@ Table of Contents:
     
         - log
         - get_log
+        - GFF_to_dict
         - nextgene
         - merge_density_lenghts
         - getallcounts
@@ -436,6 +456,353 @@ def analysis_log(fname, log_function, log_data, paths_in, paths_out):
     log_all_data[log_function] = log_data
     makePickle(log_all_data, log_file)
     
+
+def GFF_to_dict(paths_in, gff_settings):
+    
+    '''Parse gff into dict:
+        - feat_of_interest = what to look for in gff (protein_coding, tRNA, rRNA, etc)
+        - name_qual        = qualifier for alias/gene name (Name, gene_id)
+        - name_qual_alt    = alternative qualifier, if none, set as 'none' 
+        - biotype_qual     = qualifier for type of feature (biotype, etc)
+        
+        These values must correspont to values in the GFF'''
+    
+    '''Unload gff_settings'''
+    
+    path_out         = gff_settings['path_out']
+    feat_of_interest = gff_settings['feat_of_interest']  #all, protein_coding, tRNA, rRNA
+    name_qual        = gff_settings['name_qual']
+    name_qual_alt    = gff_settings['name_qual_alt']
+    remove_genes     = gff_settings['remove_genes']
+    aSD_seq          = gff_settings['aSD_seq']
+    path_badgenes    = paths_in['path_badgenes']
+    
+    '''Output path can be defined, or use 0 to set as the annotation file for my main pipeline'''
+    
+    if path_out == 0:
+        path_gff_dict = paths_in['path_gff_dict']
+    else:
+        path_gff_dict = path_out
+    
+    '''Parse GFF using BCBio'''
+    
+    GFFgen = GFF.parse(paths_in['path_gff'])
+    chr = GFFgen.next()
+    feat_num = 0
+    
+    '''Define genetic code'''
+    
+    aa_code, codon_code = ribo_util.get_genetic_code()
+    aa_comp_dict = {}
+    
+    '''Define data arrays: will be used as columns for pandas DateFrame'''
+
+    gff_dict   = {}
+    aliaslist  = []
+    startlist  = []
+    stoplist   = []
+    seqlist    = []
+    typelist   = []
+    strandlist = []
+    startcodon = []
+    stopcodon  = []
+    SDaffinity = []
+    IEpoint    = []
+    G_content  = []
+    C_content  = []
+    A_content  = []
+    T_content  = []
+    
+    aa_start = {}
+    aa_stop  = {}
+    
+    for aa in aa_code.keys():
+        aa_start[aa] = [0] * 25
+        aa_stop[aa]  = [0] * 25
+    
+    '''Make list of bad genes'''
+            
+
+    # from Gene-Wei-Li 
+
+    bad_genes = pd.read_csv(path_badgenes)
+    bad_genes = bad_genes.to_dict(orient='list')
+    bad_genes = bad_genes['GeneName']
+        
+        
+
+    '''Sift through GFF for relevant information'''
+    
+    for feature in chr.features:
+        
+        if feature.sub_features == []:
+                feat_num+=1
+                continue
+                
+        if remove_genes == 'yes':
+            
+            '''Skip over non-CDS annotations'''
+            
+            if not feature.sub_features[0].type == feat_of_interest:
+                feat_num+=1
+                continue        
+            elif feature.qualifiers.has_key('pseudo') == True:
+                feat_num+=1
+                continue
+            else:
+                feature_type = 'CDS'
+        else: 
+            
+            '''Add feat type to GFF, noting pseudogenes'''
+            
+            if feature.qualifiers.has_key('pseudo') == True:
+                feature_type = 'pseudo'
+            else: 
+                feature_type = feature.sub_features[0].type 
+                
+                    
+        '''Get feature name'''
+        
+        if name_qual in feature.qualifiers:
+            feat_name = feature.qualifiers[name_qual][0]
+        elif name_qual_alt in feature.qualifiers:
+            feat_name = feature.qualifiers[name_qual_alt][0]
+        else:
+            feat_name = 'None'
+            feat_num+=1
+            continue
+        
+        '''Remove feature if bad'''
+        
+        if remove_genes == 'yes':
+            if feat_name in bad_genes:
+                feat_num+=1
+                continue
+        else: 
+            if feat_name in bad_genes:
+                feature_type = 'bad'
+                            
+        
+        '''Get start, end, and strand position'''
+        
+        start  = feature.location.start.position 
+        end    = feature.location.end.position
+        strand = feature.strand           
+       
+        '''Analyze features of interest for feat information'''   
+        
+
+        alias = feat_name
+        
+            
+        '''Each strand is treated differently, + strand == 1'''
+            
+        if strand == 1:
+                
+            '''I save gene sequence + 50 bp from each end:
+            makes it easier to analyze start and stop sequence 
+            context without using whole genome sequence'''
+
+            if start < 50:      # if gene is near the beginning of genome sequence:
+                sequence = 'N' * (50 - start)                  # TB GFF starts at 0, add N * 50
+                sequence = sequence + chr[0:end+50].seq        # gene sequence + 50nt at each end
+            else: 
+                sequence = chr[start-50:end+50].seq            # gene sequence + 50nt at each end
+
+            strand_val = '+'
+            startcodon_pos = start
+            stopcodon_pos  = end-1
+
+            if start > 200: 
+                upstream_seq = chr[start-200:start+100].seq
+
+        else:
+
+            '''For minus strand, 'end' is start codon, 'start' is stop codon
+            and sequence is reverse compliment of gene sequence.'''
+
+            sequence_rc = chr[start-50:end+50].seq
+            sequence = sequence_rc.reverse_complement()
+
+            strand_val = '-'
+            startcodon_pos = end-1
+            stopcodon_pos  = start
+
+            if end + 200 > len(chr.seq):
+                upstream_seq = 'none'
+            else:
+                upstream_seq_rc = chr[end-100:end+200].seq
+                upstream_seq = upstream_seq_rc.reverse_complement()
+            
+        sequence = str(sequence)
+        start_codon = sequence[50:53:1]
+        stop_codon  = sequence[-53:-50]
+        
+        '''print an alias and sequence of interest'''
+        
+        if alias == 'raiA':
+            
+            print alias, sequence 
+
+        '''get sequence from start to stop for GC analysis'''
+
+        CDS_seq = sequence[50:-50:1]
+        CDS_seq_length = len(CDS_seq)
+
+        G, C, A, T = GC_of_CDS(CDS_seq)
+        
+        '''get codon composition metaplot data'''
+                
+        if CDS_seq_length % 3 == 0: 
+            codons_seq = [CDS_seq[i:i+3] for i in range(0, CDS_seq_length, 3)]
+            aa_seq     = [codon_code[codon] for codon in codons_seq] 
+        else: 
+            aa_seq = []
+
+        #get start and stop codon alignment
+        
+        if len(aa_seq) > 50:
+            
+            position_index = range(0, 25)
+            for position in position_index:
+
+                # start position data
+                aa = aa_seq[position]
+                aa_start[aa][position] += 1
+
+                # stop position data
+                aa = aa_seq[-25 + position]
+                aa_stop[aa][position] += 1  
+
+        '''Calculate SD affinity'''
+
+        SD_seq = sequence[30:50:1]    # analyze 20 nt upstream of start codons
+        SD_affinity = shine_dalgarno_affinity(aSD_seq, SD_seq)
+
+        '''Calculate Isoelectric point of protein'''
+        
+        analysed_seq = ProteinAnalysis(CDS_seq)
+        pI           = analysed_seq.isoelectric_point()
+        
+        '''Append data to lists'''
+            
+        typelist.append(feature_type)
+        aliaslist.append(alias)
+        seqlist.append(sequence)
+        strandlist.append(strand_val)
+        startlist.append(startcodon_pos)
+        stoplist.append(stopcodon_pos)
+        startcodon.append(start_codon)
+        stopcodon.append(stop_codon)
+        SDaffinity.append(SD_affinity)
+        IEpoint.append(pI)
+        G_content.append(G)
+        C_content.append(C)
+        A_content.append(A)
+        T_content.append(T)
+
+        feat_num+=1
+
+    '''Normalize codon composition data'''
+    
+    for aa in aa_start.keys():
+        total_aa_start = sum(aa_start[aa])
+        avg_aa_start   = float(total_aa_start / 25)
+        if avg_aa_start == 0:
+            avg_aa_start = 1
+        aa_start[aa]   = [ float(i / avg_aa_start) for i in aa_start[aa]]
+        
+        total_aa_stop = sum(aa_stop[aa])
+        avg_aa_stop   = float(total_aa_stop / 25)
+        if avg_aa_stop == 0:
+            avg_aa_stop = 1
+        aa_stop[aa]   = [ float(i / avg_aa_stop) for i in aa_stop[aa]]
+    
+    # reorder data for plotting
+    data_df = {}
+    position_list    = []
+    aa_list          = []
+    value_list_start = []
+    value_list_stop  = []
+    aa_property      = []
+    
+    
+    
+    for position in range(0, 25):
+        for aa in aa_start.keys():
+            
+            if aa in ['R', 'H', 'K']:
+                aa_prop = 'positive'
+            if aa in ['D', 'E']:
+                aa_prop = 'negative'
+            if aa in ['S', 'T', 'N', 'Q']:
+                aa_prop = 'polar'
+            if aa in ['A', 'V', 'I', 'L', 'M', 'C']:
+                aa_prop = 'hydrophobic'
+            if aa in ['G', 'P']:
+                aa_prop = 'steric'
+            if aa in ['F', 'Y', 'W']:
+                aa_prop = 'bulky'
+            if aa in ['_']:
+                continue
+            
+            value_start = aa_start[aa][position]
+            value_stop  = aa_stop[aa][position]
+            value_list_start.append(value_start)
+            value_list_stop.append(value_stop)
+            position_list.append(position)
+            aa_list.append(aa)
+            aa_property.append(aa_prop)
+            
+    data_df['Start']      = value_list_start
+    data_df['Stop']       = value_list_stop
+    data_df['Amino_Acid'] = aa_list
+    data_df['Position']   = position_list
+    data_df['Property']   = aa_property
+    
+    data_df = pd.DataFrame(data_df)
+    
+    display(data_df)
+    
+    sns.set(style="white")    
+    plt.figure(figsize=(25,6))
+    plt.subplot(1,2,1)
+    plot1 = sns.lineplot(x="Position", y="Start", hue="Amino_Acid", data=data_df)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    plt.subplot(1,2,2)
+    plot2 = sns.lineplot(x="Position", y="Stop", hue="Amino_Acid", data=data_df)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    plt.show()
+    
+    
+    '''Append lists to gff_dict'''
+
+    gff_dict['Alias']    = aliaslist
+    gff_dict['Strand']   = strandlist
+    gff_dict['Start']    = startlist
+    gff_dict['Stop']     = stoplist
+    gff_dict['Sequence'] = seqlist
+    gff_dict['Start_Codon'] = startcodon
+    gff_dict['Stop_Codon']  = stopcodon
+    gff_dict['Type']        = typelist
+    gff_dict['SD_affinity'] = SDaffinity
+    gff_dict['pI']        = SDaffinity
+    gff_dict['G_content'] = G_content
+    gff_dict['C_content'] = C_content
+    gff_dict['A_content'] = A_content
+    gff_dict['T_content'] = T_content
+
+           
+    '''Pickle dict for use later'''
+    ribo_util.makePickle(gff_dict,path_gff_dict)
+    
+    '''print dataframe, and save as .csv for use later'''
+    ## Print GFF to check 
+    gff_df = pd.DataFrame(gff_dict)
+    display(gff_df)
+    gff_df.to_csv(path_gff_dict + '.csv')
+    
+    return data_df
 
 
 def nextgene(alias, gff_dict):

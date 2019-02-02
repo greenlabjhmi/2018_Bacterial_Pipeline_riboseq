@@ -1,3 +1,23 @@
+'''
+    Ribosome density analysis script, to analyze features of 3' or 5' mapped ribosome density
+    Copyright (C) 2019  Fuad Mohammad, fuadm424@gmail.com
+
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+    
+'''
+
 import csv
 from Bio.Seq import Seq
 import os 
@@ -224,6 +244,8 @@ def run_readQC(fname, fastq_in, pickle_out, minlength, maxlength):
 def run_APE_site_codons(fname, fastq_in, pickle_out):
     
     '''
+    go through each read and identify the codons in the A, P , and E sites. 
+    
     input:  chromosome aligned fastq
     output: reads translated into aa
     '''
@@ -280,7 +302,7 @@ def run_APE_site_codons(fname, fastq_in, pickle_out):
 
 def APE_site_codons(inputs, paths_in, paths_out):
     
-    '''wrapper function for run_readQC'''
+    '''wrapper function for run_APE_site_codons'''
     
     
     files     = inputs['files']
@@ -437,6 +459,9 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
     start_all = {position : 0 for position in positionindex}
     stop_all  = {position : 0 for position in positionindex}
     
+    # save CDS vs 3'UTR density ratio for every gene that passes thresholds:
+    utr_vs_cds = {} # {alias: ratio}
+    
     # count genes excluded from data  = [count, [names of genes]]   
     excluded_genes = {}
     excluded_genes['short']     = [0, []]
@@ -450,7 +475,6 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
     '''Calculate gene averages and add to data structure'''
 
     for alias, start, stop, strand, feat_type in itertools.izip(alias_list, start_list,stop_list, strand_list, type_list):  
-        
         genelength = abs(start - stop)
         
         nextgene = ribo_util.nextgene(alias, gff_dict) # outputs {'distance': num, 'alias': alias}
@@ -462,11 +486,16 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
             start_window = start - length_out_ORF 
             stop_window  = stop - length_in_ORF 
             stop_window_max = stop + length_out_ORF 
+            utr_start = stop + 20
+            utr_end   = stop_window_max
+            
             
         if strand == '-':
             start_window = start + length_out_ORF 
             stop_window  = stop + length_in_ORF 
             stop_window_max = stop - length_out_ORF 
+            utr_start = stop - 20
+            utr_end   = stop_window_max - 20
                
         # exclude genes that are too close 
             
@@ -494,19 +523,28 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
             excluded_genes['short'][1].append(alias)
             continue 
         
+        '''Get read counts'''
+        
+        # reads on CDS:
         gene_reads, length_reads = ribo_util.get_genecounts(start, stop, strand, density_plus, 
-                                             density_minus, minlength, maxlength)
+                                                             density_minus, minlength, maxlength)
         gene_reads = [float(i) for i in gene_reads] 
         
-        
+        # reads over window to plot:
         window_start = start_window 
         window_stop  = stop_window_max
         windowlength = abs(start_window - stop_window_max)
         
         window_reads, window_length_reads = ribo_util.get_genecounts(window_start, window_stop, strand, density_plus, 
-                                             density_minus, minlength, maxlength)
+                                                                        density_minus, minlength, maxlength)
         window_reads = [float(i) for i in window_reads] 
-                
+        
+        # reads over UTR, length determined by plot settings
+        utrlength = abs(utr_end - utr_start)
+        
+        utr_reads, utr_length_reads = ribo_util.get_genecounts(utr_start, utr_end, strand, density_plus, 
+                                                                        density_minus, minlength, maxlength)
+        utr_reads = [float(i) for i in utr_reads]             
 
         #exclude genes with low rpkm   
         if density_type == 'rpm':
@@ -514,11 +552,21 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
         else: 
             gene_rpm  = float(sum(gene_reads)) / float(totalcounts) * 1000000
             gene_rpkm = gene_rpm / float(genelength) * 1000
+            gene_rpc  = gene_rpm / (float(genelength)/3) 
         
-        if gene_rpkm < threshold or gene_rpkm == 0:
+        if gene_rpc < threshold or gene_rpc == 0:
                 excluded_genes['threshold'][0] += 1
                 excluded_genes['threshold'][1].append(alias)
                 continue
+                  
+        # calculate UTR/CDS read ratio
+        utr_norm = sum(utr_reads) / float(utrlength)
+        cds_norm = sum(gene_reads) / float(genelength)
+        
+        if not cds_norm == 0:
+            utr_cds_ratio = utr_norm / cds_norm
+        else: 
+            utr_cds_ratio = 0
          
         # equal weight normalization: normalize all genes to be weighted equally in average
         if equal_weight == 'yes':
@@ -581,6 +629,9 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
         # count included genes 
         included_genes[0] += 1
         included_genes[1].append(alias)
+        
+        # add utr/cds to datframe:
+        utr_vs_cds[alias] = utr_cds_ratio
     
     if equal_weight == 'yes':
         gene_count = float(included_genes[0])
@@ -604,15 +655,16 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
     print '\t    - genes failing length cutoff   = ' + str(excluded_genes['short'][0])
     print '\t    - genes failing RPM cutoff      = ' + str(excluded_genes['threshold'][0])    
     print '\t    - genes in blacklist            = ' + str(excluded_genes['type'][0]) 
+    
+    
     # Save pickled versions of the datastructures:
     # name_settings: inorf_outorf_nextgene_threshold_reads/rpm_weightedyes/no_minlength_maxlength
-    
-   
     
     ribo_util.makePickle(start_all,         path_start + name_settings + '_all', protocol=pickle.HIGHEST_PROTOCOL)              
     ribo_util.makePickle(averagegene_start, path_start + name_settings + '_HM' , protocol=pickle.HIGHEST_PROTOCOL)
     ribo_util.makePickle(stop_all,          path_stop + name_settings + '_all' , protocol=pickle.HIGHEST_PROTOCOL)
     ribo_util.makePickle(averagegene_stop,  path_stop + name_settings + '_HM'  , protocol=pickle.HIGHEST_PROTOCOL)
+    ribo_util.makePickle(utr_vs_cds,        path_start + name_settings + '_UTR_CDS', protocol=pickle.HIGHEST_PROTOCOL)
     
     return
 
@@ -1185,6 +1237,406 @@ def pausescore(inputs, paths_out, settings, gff_dict, plus_dict, minus_dict):
     
     return
 
+def run_pausescore_CDS_first_half(fname, settings, plus, minus, gff, path_pausescore):
+    
+    '''define variables'''
+    
+    minlength   = settings['minlength']
+    maxlength   = settings['maxlength']
+    alignment   = settings['alignment']
+
+    lengthindex = range(minlength, maxlength + 1)
+    
+    A_site = settings['A_site shift']
+    P_site = A_site - 3
+    E_site = A_site - 6
+    two_site = A_site + 6
+    one_site = A_site + 3
+    mone_site = A_site - 9
+    mtwo_site = A_site - 12
+    
+    
+    frameshift      = settings['frameshift']
+
+    plot_upstream   = settings['plot_upstream'] / 3 * 3        #change window to interval of 3
+    plot_downstream = settings['plot_downstream'] / 3 * 3
+    
+    next_codon = settings['next_codon']
+    
+    # define plot length
+    plotlength = plot_upstream + plot_downstream + 1
+    positionindex = range(0, plotlength)
+    
+    # load density files
+    density_plus  = plus
+    density_minus = minus 
+    
+    # load annotation
+    gff_dict = gff
+    
+    alias_list  = gff_dict['Alias'] 
+    strand_list = gff_dict['Strand'] 
+    start_list  = gff_dict['Start'] 
+    stop_list   = gff_dict['Stop'] 
+    seq_list    = gff_dict['Sequence'] 
+ 
+    gff_extra  = settings['gff_extra']   # extra nucleotides in gff_dict sequence (UTR sequence)
+    start_trim = settings['start_trim'] / 3 * 3
+    stop_trim  = settings['stop_trim'] / 3 * 3   
+    
+    
+    minlength_1       = str(minlength)      +'_'
+    maxlength_1       = str(maxlength)      +'_'
+    plot_upstream_1   = str(plot_upstream)  +'_'
+    plot_downstream_1 = str(plot_downstream)+'_'
+    start_trim_1      = str(start_trim)     +'_'
+    stop_trim_1       = str(stop_trim)      +'_'
+    frameshift_1      = str(frameshift)     +'_'
+    a_site_1          = str(A_site)         +'_'
+    
+    name_settings = minlength_1+maxlength_1+plot_upstream_1+plot_downstream_1
+    name_settings += start_trim_1+stop_trim_1+frameshift_1
+        
+    # import genetic code
+    aa_code, codon_code = ribo_util.get_genetic_code()
+    
+    
+    '''output data structure'''
+    
+    # aa/codon avgplot      = { aa: {length: [values]}} 
+    # aa/codon count        = { aa: N}
+    # aa/codon score        = { aa: [aa_list], A site score: [A_list]...
+                                
+    aa_avgplot  = {}
+    aa_count    = {}
+    aa_score    = {}
+    aa_score_df = {}
+    aa_list     = []
+    aa_A_list   = []
+    aa_P_list   = []
+    aa_E_list   = []
+    aa_1_list   = []
+    aa_2_list   = []
+    aa_m1_list   = []
+    aa_m2_list   = []
+    
+    codon_avgplot  = {}
+    codon_count    = {}
+    codon_score    = {}
+    codon_score_df = {}
+    codon_list     = []
+    codon_A_list   = []
+    codon_P_list   = []
+    codon_E_list   = []
+    codon_1_list   = []
+    codon_2_list   = []
+    codon_m1_list   = []
+    codon_m2_list   = []
+    
+    # create empty datastructures to store density info:
+    for aa in aa_code.keys():
+        aa_avgplot[aa] = {length : [0]*(plotlength) for length in lengthindex}
+        aa_count[aa]   = 0
+        aa_score[aa]   = [0, 0, 0, 0, 0, 0, 0] # [Asite, P site, E site] 
+        
+    for codon in codon_code.keys():
+        codon_avgplot[codon] = {length : [0]*(plotlength) for length in lengthindex}
+        codon_count[codon]   = 0
+        codon_score[codon]   = [0, 0, 0, 0, 0, 0, 0] # [Asite, P site, E site] 
+    
+    '''genes in data''' 
+    
+    # count genes excluded from data  = [count, [names of genes]]   
+    excluded_genes = {}
+    excluded_genes['short']         = [0, []]
+    excluded_genes['low_density']   = [0, []]
+    excluded_genes['not_divisible'] = [0, []]
+    # count included genes
+    included_genes = [0, []]
+        
+        
+    '''iterate through every annotated gene to get codon density info:'''
+    
+    for alias, start, stop, strand, sequence in itertools.izip(alias_list, start_list,stop_list, strand_list, seq_list):  
+                
+        ''' define start and stop positions for codons to analyze:
+        
+        # = codon 
+        #################################### = GFF sequence  (50 extra nt)
+           ##############################    = AUG to UGA
+             ##########################      = density to analyze : remove start and stop peaks
+                 ##################          = codons to analyze : remove plot window
+        
+        '''
+        
+        # First, define density without start and stop peaks:
+        
+        genelenght = abs(stop - start) + 1 
+        half_gene = genelenght / 2 
+        half_gene = half_gene / 3 * 3
+    
+        if strand == '+':
+            density_dict  = density_plus
+            density_start = start + start_trim + frameshift
+            density_stop  = density_start + half_gene  
+            
+            period = 1
+            
+        elif strand == '-':
+            density_dict  = density_minus
+            density_start = start - start_trim - frameshift
+            density_stop  = density_start - half_gene
+            
+            period = -1
+        
+        # GFF seq has 50 extra nucleotides, so remove:
+        # Also remove several codons from start and stop positions:
+        
+        codon_seq_start = gff_extra + start_trim + plot_upstream + frameshift
+        codon_seq_stop  = codon_seq_start + half_gene - 30
+            
+        seq       = sequence[codon_seq_start : codon_seq_stop]
+        seqlength = len(seq)
+        
+        # exclude genes that are not divisable by 3
+        if seqlength % 3 != 0:
+            excluded_genes['not_divisible'][0] += 1
+            excluded_genes['not_divisible'][1].append(alias)
+            continue
+        
+        # exclude genes shorter than plot
+        if seqlength < plotlength + 1:
+            excluded_genes['short'][0] += 1
+            excluded_genes['short'][1].append(alias)
+            continue
+            
+        elif codon_seq_start - codon_seq_stop > len(sequence):
+            excluded_genes['short'][0] += 1
+            excluded_genes['short'][1].append(alias)
+            continue
+    
+        # make a list of codons in the sequence:
+        codons_seq = [seq[i:i+3] for i in range(0, seqlength, 3)]
+        aa_seq     = [codon_code[codon] for codon in codons_seq]
+        
+        #make empty density dict for the gene
+        genelength    = abs(density_start - density_stop) + 1
+        gene_density  = {}
+        total_density = [0] * genelength
+        
+        # fill density dict with density info
+        # gives density encompassed by seq, plus extra defined by plotlength
+        for length in lengthindex:
+            length_density       = density_dict[length][density_start: density_stop: period]
+            length_density_float = [float(i) for i in length_density]
+            gene_density[length] = length_density
+            total_density        = [x + y for x, y in itertools.izip(total_density, length_density)]
+            
+        gene_avgreads = float(sum(total_density)) / float(genelength)
+
+            
+        # normalize density by total gene density
+        if gene_avgreads < 0.5:
+            excluded_genes['low_density'][0] += 1
+            excluded_genes['low_density'][1].append(alias)
+            continue
+            
+        else: 
+            relative_density = {}
+            
+            for length in lengthindex:
+                relative_density[length] = [reads / gene_avgreads for reads in gene_density[length]]
+        
+        # add data to dataframe
+        codon_index = 0
+        for codon in codons_seq:
+            codon_position = (codon_index * 3)
+            aa = aa_seq[codon_index]
+            
+            codon_index        += 1
+            codon_count[codon] += 1
+            aa_count[aa]       += 1
+
+            
+            for length in lengthindex:
+                for position in positionindex:
+                    
+                    density_position = codon_position + position
+                    density          = relative_density[length][density_position]
+                    
+                    codon_avgplot[codon][length][position] += density
+                    aa_avgplot[aa][length][position]       += density
+                    
+        included_genes[0] += 1
+        included_genes[1].append(alias)
+    
+    #divide data by total instances of the codon or aa
+    for codon in codon_avgplot.keys():
+        for length in lengthindex:
+            for position in positionindex:
+                if codon_count[codon] == 0:
+                    continue 
+                else: 
+                    codon_avgplot[codon][length][position] = codon_avgplot[codon][length][position] / codon_count[codon]
+    
+    for aa in aa_avgplot.keys():
+        for length in lengthindex:
+            for position in positionindex:
+                if aa_count[aa] == 0:
+                    continue
+                else: 
+                    aa_avgplot[aa][length][position] = aa_avgplot[aa][length][position] / aa_count[aa]
+                
+    '''Convert data for plotting and csv'''
+    
+    codon_data     = {}
+    codon_data_sum = {}
+    aa_data     = {}
+    aa_data_sum = {}
+    
+    A_site_shift = plot_upstream - A_site 
+    P_site_shift = plot_upstream - P_site 
+    E_site_shift = plot_upstream - E_site
+    one_site_shift = plot_upstream - one_site 
+    two_site_shift = plot_upstream - two_site 
+    mone_site_shift = plot_upstream - mone_site 
+    mtwo_site_shift = plot_upstream - mtwo_site 
+    
+    for codon in codon_avgplot.keys():
+        df = pd.DataFrame(codon_avgplot[codon])
+        df = df.T
+        df = df.reindex(index=df.index[::-1])
+
+        plot_range  = len(df.columns)
+        shift_start = - plot_upstream
+        shift_stop  = plot_range - plot_upstream
+
+        df.columns = pd.RangeIndex(start = shift_start, stop = shift_stop, step = 1)
+
+        codon_data[codon]     = df
+        codon_data_sum[codon] = df.sum(0)
+        
+        codon_score[codon][0] = sum(codon_data_sum[codon][A_site_shift: A_site_shift + 3:1])/3
+        codon_score[codon][1] = sum(codon_data_sum[codon][P_site_shift: P_site_shift + 3:1])/3                            
+        codon_score[codon][2] = sum(codon_data_sum[codon][E_site_shift: E_site_shift + 3:1])/3
+        codon_score[codon][3] = sum(codon_data_sum[codon][one_site_shift: one_site_shift + 3:1])/3
+        codon_score[codon][4] = sum(codon_data_sum[codon][two_site_shift: two_site_shift + 3:1])/3                            
+        codon_score[codon][5] = sum(codon_data_sum[codon][mone_site_shift: mone_site_shift + 3:1])/3
+        codon_score[codon][6] = sum(codon_data_sum[codon][mtwo_site_shift: mtwo_site_shift + 3:1])/3
+        
+        codon_list.append(codon)
+        codon_A_list.append(codon_score[codon][0])
+        codon_P_list.append(codon_score[codon][1])
+        codon_E_list.append(codon_score[codon][2])
+        codon_1_list.append(codon_score[codon][3])
+        codon_2_list.append(codon_score[codon][4])
+        codon_m1_list.append(codon_score[codon][5])
+        codon_m2_list.append(codon_score[codon][6])
+
+    for aa in aa_avgplot.keys():
+        df = pd.DataFrame(aa_avgplot[aa])
+        df = df.T
+        df = df.reindex(index=df.index[::-1])
+
+        plot_range  = len(df.columns)
+        shift_start = - plot_upstream
+        shift_stop  = plot_range - plot_upstream
+
+        df.columns = pd.RangeIndex(start = shift_start, stop = shift_stop, step = 1)
+
+        aa_data[aa]     = df
+        aa_data_sum[aa] = df.sum(0) 
+                                    
+        aa_score[aa][0] = sum(aa_data_sum[aa][A_site_shift: A_site_shift + 3:1])/3    
+        aa_score[aa][1] = sum(aa_data_sum[aa][P_site_shift: P_site_shift + 3:1])/3
+        aa_score[aa][2] = sum(aa_data_sum[aa][E_site_shift: E_site_shift + 3:1])/3
+        aa_score[aa][3] = sum(aa_data_sum[aa][one_site_shift: one_site_shift + 3:1])/3    
+        aa_score[aa][4] = sum(aa_data_sum[aa][two_site_shift: two_site_shift + 3:1])/3
+        aa_score[aa][5] = sum(aa_data_sum[aa][mone_site_shift: mone_site_shift + 3:1])/3 
+        aa_score[aa][6] = sum(aa_data_sum[aa][mtwo_site_shift: mtwo_site_shift + 3:1])/3 
+
+        aa_list.append(aa)
+        aa_A_list.append(aa_score[aa][0])
+        aa_P_list.append(aa_score[aa][1])
+        aa_E_list.append(aa_score[aa][2])
+        aa_1_list.append(aa_score[aa][3])
+        aa_2_list.append(aa_score[aa][4])
+        aa_m1_list.append(aa_score[aa][5])
+        aa_m2_list.append(aa_score[aa][6])
+        
+    codon_score_df['Codon']  = codon_list
+    codon_score_df['A_site'] = codon_A_list
+    codon_score_df['P_site'] = codon_P_list
+    codon_score_df['E_site'] = codon_E_list
+    codon_score_df['1_site'] = codon_1_list
+    codon_score_df['2_site'] = codon_2_list
+    codon_score_df['-1_site'] = codon_m1_list
+    codon_score_df['-2_site'] = codon_m2_list
+
+    aa_score_df['Amino Acid'] = aa_list
+    aa_score_df['A_site']     = aa_A_list
+    aa_score_df['P_site']     = aa_P_list
+    aa_score_df['E_site']     = aa_E_list
+    aa_score_df['1_site']     = aa_1_list
+    aa_score_df['2_site']     = aa_2_list
+    aa_score_df['-1_site']     = aa_m1_list
+    aa_score_df['-2_site']     = aa_m2_list
+
+    codon_df = pd.DataFrame(codon_score_df)
+    codon_df.to_csv(path_pausescore + 'codon_scores.csv')
+    
+    aa_df = pd.DataFrame(aa_score_df)
+    aa_df.to_csv(path_pausescore + 'aa_scores.csv')
+    
+    
+    ribo_util.makePickle(codon_data,     path_pausescore +'first_half_codon_HM_data'  + name_settings , protocol=pickle.HIGHEST_PROTOCOL) 
+    ribo_util.makePickle(codon_data_sum, path_pausescore +'first_half_codon_plot_data'+ name_settings , protocol=pickle.HIGHEST_PROTOCOL)  
+    ribo_util.makePickle(codon_score_df, path_pausescore +'first_half_codon_scores'   + name_settings , protocol=pickle.HIGHEST_PROTOCOL)
+    ribo_util.makePickle(aa_data,        path_pausescore +'first_half_aa_HM_data'     + name_settings , protocol=pickle.HIGHEST_PROTOCOL) 
+    ribo_util.makePickle(aa_data_sum,    path_pausescore +'first_half_aa_plot_data'   + name_settings , protocol=pickle.HIGHEST_PROTOCOL)
+    ribo_util.makePickle(aa_score_df,    path_pausescore +'first_half_aa_scores'      + name_settings , protocol=pickle.HIGHEST_PROTOCOL)
+    
+    print excluded_genes['short'][0]    
+    print excluded_genes['low_density'][0]
+    print excluded_genes['not_divisible'][0]
+    print included_genes[0]
+    return  
+
+
+def pausescore_first_half(inputs, paths_out, settings, gff_dict, plus_dict, minus_dict):
+    
+    files     = inputs['files']
+    threads   = inputs['threads'] 
+    multi     = inputs['multiprocess']
+    arguments = []
+    
+    if not files:
+        print("There are no files")
+        return
+    
+    print "Started pause score analysis at " + str(datetime.now())
+
+    for fname in files:
+        path_pausescore = paths_out['path_analysis'] + fname + '/pause_score/'
+        if not os.path.exists(path_pausescore):
+            os.makedirs(path_pausescore)
+        plus  = plus_dict[fname]
+        minus = minus_dict[fname] 
+       
+        if not multi == 'yes':
+            run_pausescore_CDS_first_half(fname, settings, plus, minus, gff_dict, path_pausescore)
+        else:     
+            argument = [fname, settings, plus, minus, gff_dict, path_pausescore]
+            arguments.append(argument)
+    
+    if multi == 'yes':
+        ribo_util.multiprocess(run_pausescore_CDS_first_half, arguments, threads)
+    
+    print "Finished pause score analysis at " + str(datetime.now())
+    
+    return
+
+
                 
 def run_asymmetry(fname, settings, plus, minus, gff, path_analysis): 
     
@@ -1352,6 +1804,7 @@ def run_genelist(fname, settings, plus, minus, gff, path_analysis):
     start_codon_list = gff_dict['Start_Codon'] 
     stop_list        = gff_dict['Stop'] 
     stop_codon_list  = gff_dict['Stop_Codon'] 
+    annotation_list  = gff_dict['Annotation']
     SD_affinity      = gff_dict['SD_affinity'] 
     
     '''Define genelist datastructure'''
@@ -1394,7 +1847,8 @@ def run_genelist(fname, settings, plus, minus, gff, path_analysis):
     genelist['Stop_Codon']  = stop_codon_list
     genelist['RPKM']        = rpkm_list
     genelist['Genelength']  = length_list
-    
+    genelist['Annotation']  = annotation_list
+
     
     df = pd.DataFrame(genelist)
     df.to_csv(path_analysis + fname + '_genelist.csv')
@@ -1555,7 +2009,7 @@ def run_runoff(fname, settings, plus, minus, gff, path_runoff):
     plot_downstream_1 = str(plot_downstream)+'_'
     start_trim_1      = str(start_trim)     +'_'
     stop_trim_1       = str(stop_trim)      +'_'
-    frameshift_1      = str(frameshift)      +'_'
+    frameshift_1      = str(frameshift)     +'_'
     
     name_settings = plot_upstream_1+plot_downstream_1+start_trim_1+stop_trim_1+minlength_1+maxlength_1+frameshift_1
     
@@ -1878,7 +2332,7 @@ def runoff(inputs, paths_out, settings, gff_dict, plus_dict, minus_dict):
     
     return
 
-def run_read_composition_context(fname, inputs, settings, plus, minus, gff, path_out):
+def run_read_composition_context_notdone(fname, inputs, settings, plus, minus, gff, path_out):
     
     minlength  = settings['minlength']
     maxlength  = settings['maxlength']
@@ -2060,6 +2514,178 @@ def run_read_composition_context(fname, inputs, settings, plus, minus, gff, path
     
     print length_dist, read_count, pos_count, index_count
     print excluded_genes
+
+                  
+        
+'''def read_context_notdone(inputs, paths_out, settings, gff_dict, plus_dict, minus_dict):
+    files     = inputs['files']
+    threads   = inputs['threads'] 
+    arguments = []
+    
+    if not files:
+        print("There are no files")
+        return
+    
+    print "Started  at " + str(datetime.now())
+
+    for fname in files:
+        path_analysis = paths_out['path_analysis'] + fname + '/reads_position/'
+        if not os.path.exists(path_analysis):
+            os.makedirs(path_analysis)
+        plus  = plus_dict[fname]
+        minus = minus_dict[fname] 
+        
+        run_read_composition_context(fname, inputs, settings, plus, minus, gff_dict, path_analysis)
+        argument = [fname, inputs, plus, minus, gff_dict, path_analysis]
+        arguments.append(argument)
+    
+    #ribo_util.multiprocess(run_read_extended, arguments, threads)
+    print "Finished  at " + str(datetime.now())'''
+
+    
+def run_read_composition_context(fname, inputs, settings, plus, minus, gff, path_out):
+    
+    minlength    = settings['minlength']
+    maxlength    = settings['maxlength']
+    gff_extra    = settings['gff_extra']   # extra nucleotides in gff_dict sequence (UTR sequence)
+    alignment    = settings['alignment']
+    windowlength = settings['windowlength']
+    
+    start_trim = settings['start_trim'] 
+    stop_trim  = settings['stop_trim']
+    
+    
+    density_plus  = plus
+    density_minus = minus 
+    gff_dict = gff
+    
+    alias_list  = gff_dict['Alias'] 
+    strand_list = gff_dict['Strand'] 
+    start_list  = gff_dict['Start'] 
+    stop_list   = gff_dict['Stop']
+    seq_list    = gff_dict['Sequence']
+    
+    positionindex = range(0, windowlength+1) 
+    lengthindex   = range(minlength, maxlength+1)
+    length_data   = {length : 0  for length in lengthindex}
+
+    G_data  = {length : [0]*(windowlength+1) for length in lengthindex}
+    C_data  = {length : [0]*(windowlength+1) for length in lengthindex}
+    A_data  = {length : [0]*(windowlength+1) for length in lengthindex}
+    U_data  = {length : [0]*(windowlength+1) for length in lengthindex}
+        
+    for alias, start, stop, strand, sequence in itertools.izip(alias_list, start_list,
+                                                                stop_list, strand_list, seq_list):
+            
+        if strand == '+':
+            density_dict  = density_plus
+            density_start = start + start_trim
+            density_stop  = stop - stop_trim          
+            period = 1
+            
+        elif strand == '-':
+            density_dict  = density_minus
+            density_start = start - start_trim 
+            density_stop  = stop + stop_trim
+            period = -1
+        
+        
+        #make empty density dict for the gene
+        genelength    = abs(density_start - density_stop) + 1
+        gene_density  = {}
+        total_density = [0] * genelength
+        
+        #if gene is shorter than window of analysis:
+        if genelength < windowlength:
+            continue
+        
+        # gives density encompassed by seq, plus extra defined by plotlength
+        for length in lengthindex:
+            length_density       = density_dict[length][density_start: density_stop: period]
+            gene_density[length] = length_density
+            total_density        = [x + y for x, y in itertools.izip(total_density, length_density)]
+        
+        total_density = sum(total_density)
+        
+        total_read_count = 0 
+                                                      
+        for length in lengthindex:
+            
+            generated_read_list = []
+            position = 0 
+            
+            for read_counts in gene_density[length]:
+                
+                
+                position_3 = position + gff_extra + start_trim + 5
+                position_5 = position_3 - windowlength
+                newread = sequence[position_5: position_3]
+                newread_list = [newread] * read_counts
+                
+                generated_read_list += newread_list
+                
+                length_data[length] += read_counts 
+                total_read_count += read_counts
+                
+                position += 1
+        
+            if not generated_read_list:
+                continue
+                
+            for generated_read in generated_read_list:
+                
+                read_length = len(generated_read) 
+                if read_length < windowlength:
+                    print 'small'
+                    
+                for position2 in range(1, read_length+1):
+                    if generated_read[-position2] == 'G':
+                        G_data[length][position2-1] += 1
+                    elif generated_read[-position2] == 'C':
+                        C_data[length][position2-1] += 1
+                    elif generated_read[-position2] == 'A':
+                        A_data[length][position2-1] += 1
+                    elif generated_read[-position2] == 'T':
+                        U_data[length][position2-1] += 1
+                                
+    print total_read_count, length_data
+        
+    for length in lengthindex:  
+        if length_data[length] >=1:
+            T = length_data[length]
+        else:
+            T = 1
+            
+        for position in range(0, windowlength+1):
+                
+            g = float(G_data[length][position]) / float(T) *100
+            c = float(C_data[length][position]) / float(T) *100 
+            a = float(A_data[length][position]) / float(T) *100 
+            u = float(U_data[length][position]) / float(T) *100 
+            
+            G_data[length][position] = g
+            C_data[length][position] = c
+            A_data[length][position] = a
+            U_data[length][position] = u
+    
+    sum_reads = sum(length_data.values())
+    sum_reads = float(sum_reads)
+    
+    '''# calculate read length distribution: 
+    
+    for length in length_dist.keys():
+        sum_lenght = float(length_data[length])
+        read_fraction = sum_lenght / float(sum_reads) * 100
+        length_dist[length] = read_fraction'''
+        
+    ribo_util.makePickle(G_data, path_out + 'comp_genome_G')
+    ribo_util.makePickle(C_data, path_out + 'comp_genome_C')
+    ribo_util.makePickle(A_data, path_out + 'comp_genome_A')
+    ribo_util.makePickle(U_data, path_out + 'comp_genome_U')       
+    #ribo_util.makePickle(length_dist, path_out + 'read_distribution_gene')
+    
+    #print read_count, pos_count, index_count
+    #print excluded_genes
 
                   
         
@@ -2835,5 +3461,110 @@ def pausescore_waves(inputs, paths_out, settings, gff_dict, plus_dict, minus_dic
     
     return
 
+def run_read_extended(fname, inputs, settings, plus, minus, gff, path_out):
+    
+    minlength = settings['minlength']
+    maxlength = settings['maxlength']
+    
+    density_plus  = plus
+    density_minus = minus 
+    gff_dict = gff
+    
+    alias_list  = gff_dict['Alias'] 
+    strand_list = gff_dict['Strand'] 
+    start_list  = gff_dict['Start'] 
+    stop_list   = gff_dict['Stop']
+    seq_list    = gff_dict['Sequence']
+    
+    positionindex = range(0, maxlength+1) 
+    lengthindex   = range(minlength, maxlength+1)
+        
+    length_data = {length : 0  for length in lengthindex}
 
+    G_data  = {length : [0]*(maxlength+1) for length in lengthindex}
+    C_data  = {length : [0]*(maxlength+1) for length in lengthindex}
+    A_data  = {length : [0]*(maxlength+1) for length in lengthindex}
+    U_data  = {length : [0]*(maxlength+1) for length in lengthindex}
+       
+    for alias, start, stop, strand, sequence in itertools.izip(
+        alias_list, start_list,stop_list, strand_list, seq_list):
+        
+        if strand == '+':
+            
+            genelength = len(range(start+30, stop + 1)) 
+            
+            for length in lengthindex:
+                for position in range(0, genelength):
+                    
+                    density = density_plus[length][start+30 + position] 
+                    if density == 0:
+                        continue
+                        
+                    position_end = position + 40
+                    position_beg = position_end - maxlength
+                    newread = sequence[position_beg: position_end]
+                    newread_list = [newread] * density
+                    length_data[length] += density       
+                    
+                    for newread in newread_list:
+                        for position2 in range(1, maxlength+1):
+                            if newread[-position2] == 'G':
+                                G_data[length][position2-1] += 1
+                            elif newread[-position2] == 'C':
+                                C_data[length][position2-1] += 1
+                            elif newread[-position2] == 'A':
+                                A_data[length][position2-1] += 1
+                            elif newread[-position2] == 'T':
+                                U_data[length][position2-1] += 1
+                                
+    for length in lengthindex:  
+        if length_data[length] >=1:
+            T = length_data[length]
+        else:
+            T = 1
+            
+        for position in range(0, maxlength):
+                
+            g = float(G_data[length][position]) / float(T) *100
+            c = float(C_data[length][position]) / float(T) *100 
+            a = float(A_data[length][position]) / float(T) *100 
+            u = float(U_data[length][position]) / float(T) *100 
+            
+            G_data[length][position] = g
+            C_data[length][position] = c
+            A_data[length][position] = a
+            U_data[length][position] = u
+    
+    ribo_util.makePickle(G_data, path_out + 'comp_genome_G')
+    ribo_util.makePickle(C_data, path_out + 'comp_genome_C')
+    ribo_util.makePickle(A_data, path_out + 'comp_genome_A')
+    ribo_util.makePickle(U_data, path_out + 'comp_genome_U')           
+                  
+                    
+def read_extended(inputs, settings, paths_out, gff_dict, plus_dict, minus_dict):
+    files     = inputs['files']
+    threads   = inputs['threads'] 
+    arguments = []
+    
+    if not files:
+        print("There are no files")
+        return
+    
+    print "Started  at " + str(datetime.now())
+
+    for fname in files:
+        path_analysis = paths_out['path_analysis'] + fname + '/'
+        if not os.path.exists(path_analysis):
+            os.makedirs(path_analysis)
+        plus  = plus_dict[fname]
+        minus = minus_dict[fname] 
+        
+        run_read_extended(fname, inputs, settings, plus, minus, gff_dict, path_analysis)
+        argument = [fname, inputs, settings, plus, minus, gff_dict, path_analysis]
+        arguments.append(argument)
+    
+    #ribo_util.multiprocess(run_read_extended, arguments, threads)
+    print "Finished  at " + str(datetime.now())
+
+    
     
