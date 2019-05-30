@@ -29,4 +29,8 @@ Files to run the pipeline:
     - Coli_dict          = python dictionary of annotation information (gene name, seq, start, stop, etc)
     
    - Bowtie_indices = index files for bowtie
-  
+ 
+Running the pipeline:
+
+  - First run Github-Ribo_Density.ipynb to create 3' aligned density files. Make sure input FASTQ files are in the right directory. Specify the name of the FASTQ in the notebook or add the library to Library_names.csv. Filtering the FASTQ is done using skewer. Alignment is done using Bowtie using index files provided, or you can make your own indices. Reads mapped are then condensed to the 3' end and saved as a dictionary. 
+  - Second, run Github-Ribo_Analysis.ipynb to analyze ribosome footprints at the genomic level using gene averaged information. The annotation file (Coli.GFF) is converted into a dictionary to speed up analysis, and is used to identify gene positions on the genome. 
