@@ -21,10 +21,10 @@ Files to run the pipeline:
                         Pipeline will look for library names from here
                         
   - Annotation folder = contains annotation information for E. coli. not all of these are used.
-                          - bad_genes.csv      = pseudogenes, genes with homologues, insertion elements, etc. 
-                          - annotation.csv     = used to categorize genes by function (toxin/antitoxin, ribosomal protein, etc)
-                          - localization.csv   = identify genes interacting with SRP for membrane localization
-                          - protein_coding.csv = genes that code for proteins
-                          - Coli.gff           = E. coli ref genome NC_000913.2 annotation file
-                          - Coli_dict          = python dictionary of annotation information (gene name, seq, start, stop, etc)
+    - bad_genes.csv      = pseudogenes, genes with homologues, insertion elements, etc. 
+    - annotation.csv     = used to categorize genes by function (toxin/antitoxin, ribosomal protein, etc)
+    - localization.csv   = identify genes interacting with SRP for membrane localization
+    - protein_coding.csv = genes that code for proteins
+    - Coli.gff           = E. coli ref genome NC_000913.2 annotation file
+    - Coli_dict          = python dictionary of annotation information (gene name, seq, start, stop, etc)
   
