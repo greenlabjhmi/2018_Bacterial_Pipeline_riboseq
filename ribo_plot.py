@@ -22,6 +22,8 @@ import numpy as np
 import math 
 from sklearn.linear_model import LinearRegression
 import itertools
+import os, time
+
 
 import plotly 
 import plotly.plotly as py
@@ -60,8 +62,12 @@ def size_dist(inputs, paths_in, paths_out):
         plt.xlabel("Read Length")
         plt.ylabel("Percent of Reads")
         plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    
+    path_comparison = path_figure + 'Comparison/size_dist/'
+    if not os.path.exists(path_comparison):
+            os.makedirs(path_comparison)
 
-    plt.savefig(path_figure + 'Comparison/size_dist' + '/sizedist_'+naming+'.pdf', dpi=400, bbox_inches="tight")
+    plt.savefig(path_comparison + 'sizedist_'+naming+'.pdf', dpi=400, bbox_inches="tight")
     plt.show()
 
     for fname in files: 
@@ -130,7 +136,7 @@ def read_comp_context(inputs, paths_in, paths_out):
             plt.subplot(1,4,plot_num)
             plot = sns.heatmap(df, cmap = "RdBu_r", vmin = 0, vmax = 50)
             
-            plot.set_xlim([0,10])
+            #plot.set_xlim([0,10])
 
             plt.setp(plot.get_xticklabels(), visible=False)
             plt.setp(plot.get_xticklabels()[0::5], visible=True)

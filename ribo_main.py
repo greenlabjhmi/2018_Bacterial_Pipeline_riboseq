@@ -62,7 +62,7 @@ def run_filter(inputs, paths_in, paths_out): # all arguments = dict
     '''
     Filter reads using skewer
     '''
-    
+                 
     files        = inputs['files']
     run          = inputs['run_filtering']
     minlength    = inputs['minlength']
@@ -72,16 +72,32 @@ def run_filter(inputs, paths_in, paths_out): # all arguments = dict
     threads      = inputs['threads']    # filterreads has its own threading,
     filtering    = []
     log_data     = {}
+    
+    # If using Unique Molecular Index (UMI) in library prep. Skewer will not remove UMI
+    # so we will do it manually after. skewer output file will have UMI naming to identify it: 
+    
+    if inputs['run_filter_UMI'] == 'yes':
+        # UMI adds 10 nt to read
+        minlength = minlength + 10
+        maxlength = maxlength + 10
+        # for naming: UMI 
+        UMI = '_UMI'
+    else:
+        UMI = ''
+    
+    # return error if file names not specified
     if not files:
         print("There are no files")
         return
     
+    # loop through files to filter
     for fname in files: 
                        
         file_in  = paths_in['path_fastq'] + fname
-        file_out = paths_out['path_filter'] + fname 
+        file_out = paths_out['path_filter'] + fname + UMI
         file_log = paths_out['path_log'] + fname + '_filter'
-                    
+        
+        # if skewer filtering isnt needed, skip 
         if not run == 'yes':
             if not os.path.exists(file_out+'-trimmed.fastq'):
                 print "ERROR: " + fname + " has not been filtered, change run setting"
@@ -89,12 +105,14 @@ def run_filter(inputs, paths_in, paths_out): # all arguments = dict
             else: 
                 print fname + " has been filtered"
                 continue
-                
+        
+        # return error if input file missing, and continue to next file
         if not os.path.exists(file_in):
             print "ERROR: " + fname + " has no FASTQ file, has been removed from analysis"
             inputs['files'].remove(fname)
             continue
         
+        # make commmand string
         command_to_run = 'skewer -x %s -Q %d  -l %d -L %d -o %s --quiet -t %d %s 1>>%s 2>%s' % (
             linker, 
             phred_cutoff, 
@@ -116,7 +134,8 @@ def run_filter(inputs, paths_in, paths_out): # all arguments = dict
         ribo_util.analysis_log(fname, log_function, log_data, paths_in, paths_out)
         
         filtering.append(command_to_run)
-        
+    
+    #print start time and run skewer
     print "-----FILTER-----"
     print '\nFiles to filter: ' + ', '.join(files)
     print "Filter parameters are: \nmin length = %s \nmax length = %s \nphred cutoff = %s " % (
@@ -130,9 +149,93 @@ def run_filter(inputs, paths_in, paths_out): # all arguments = dict
     
     return inputs
         
+
+def run_filter_UMI(inputs, paths_in, paths_out):
+    
+    print "\n\tStarted UMI removal at " + str(datetime.now())
         
+    
+    files        = inputs['files']
+    run          = inputs['run_filter_UMI']
+    linker_UMI   = inputs['linker_UMI'] 
+    RT_UMI       = inputs['linker_UMI'] 
+    
+    for fname in files: 
+                       
+        file_in  = paths_out['path_filter'] + fname + '_UMI-trimmed.fastq'
+        file_out = paths_out['path_filter'] + fname + '-trimmed.fastq'
+        file_log = paths_out['path_log'] + fname + '_filter'
+                    
+        if not run == 'yes':
+            print fname + " will not be filtered for a UMI"
+            continue
+            
+        else:
+            file_out = open(paths_out['path_filter'] + fname + '-trimmed.fastq', "w")
+
+        UMI        = {}
+        umi        = []
+        n_umi      = []
+        umi_unique = []
+        with open(file_in, 'rb') as f:
+            
+            count = 0
+            
+            for line in f:
+                if count == 0:
+                    count = 1
+                    Identifier = line
+                    continue
+                if count == 1:
+                    count = 2
+                    Sequence = line
+                    continue
+                if count == 2:
+                    count = 3
+                    QIdentifier = line
+                    continue
+                if count == 3:
+                    count = 0
+                    PHRED = line
+                    
+                    
+                    Identifier  = Identifier[:-1]
+                    Sequence    = Sequence[RT_UMI:-linker_UMI-1]
+                    QIdentifier = QIdentifier[:-1]
+                    PHRED       = PHRED[RT_UMI:-linker_UMI-1]
+
+                    file_out.write(Identifier + "\n" + Sequence + "\n" + QIdentifier + "\n" + PHRED + "\n")
+                    
+                    umi_seq = Sequence[0:RT_UMI] + Sequence[-linker_UMI-1:-1]
+                    
+                    if umi_seq not in umi:
+                        umi.append(umi_seq)
+                        n_umi.append(1)
+                        umi_unique.append('yes')
+                        umi_read.append('')
+                        n_seq.append(1)
+                    
+                    else: 
+                        index = umi.index(umi_seq)
+                        n_umi[index] += 1
+                        umi_unique[index] = 'no'
+                            
+                    continue
+            
+        UMI['UMI']    = umi
+        UMI['count']  = n_umi
+        UMI['unique'] = umi_unique
+        
+        ribo_util.makePickle(UMI, file_log + fname + '_UMI', protocol=pickle.HIGHEST_PROTOCOL)
+
+        f.close()
+        file_out.close()
+
+    print "\tFinished UMI removal at " + str(datetime.now())
+    print "\tCOMPLETED UMI REMOVAL"
         
 
+        
 ############################
 #####     Aligning     #####   
 ############################
@@ -216,7 +319,7 @@ def run_align(inputs, paths_in, paths_out): # all arguments = dict
                                          paths_out['path_chr'], fname + '_match.SAM',
                                          file_log, file_log)
         chromosome.append(bowtie_chr)
-
+    
     print "\n------ALIGN------"
     print '\nFiles to align: ' + ', '.join(files)
     print "\n\tStarted Bowtie alignment at " + str(datetime.now())
@@ -238,8 +341,7 @@ def run_align(inputs, paths_in, paths_out): # all arguments = dict
     return
         
         
-        
-
+    
 ############################
 #####      Density     #####   
 ############################
