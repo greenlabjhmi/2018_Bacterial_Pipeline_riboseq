@@ -27,4 +27,6 @@ Files to run the pipeline:
     - protein_coding.csv = genes that code for proteins
     - Coli.gff           = E. coli ref genome NC_000913.2 annotation file
     - Coli_dict          = python dictionary of annotation information (gene name, seq, start, stop, etc)
+    
+   - Bowtie_indices = index files for bowtie
   
