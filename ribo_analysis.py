@@ -446,7 +446,7 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
     strand_list = gff_dict['Strand'] 
     start_list  = gff_dict['Start'] 
     stop_list   = gff_dict['Stop'] 
-    type_list   = gff_dict['Type']
+    #type_list   = gff_dict['Type']
     
     
     '''datastructures:'''
@@ -473,8 +473,8 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
     
     
     '''Calculate gene averages and add to data structure'''
-
-    for alias, start, stop, strand, feat_type in itertools.izip(alias_list, start_list,stop_list, strand_list, type_list):  
+    
+    for alias, start, stop, strand in itertools.izip(alias_list, start_list,stop_list, strand_list):  
         genelength = abs(start - stop)
         
         nextgene = ribo_util.nextgene(alias, gff_dict) # outputs {'distance': num, 'alias': alias}
@@ -505,17 +505,18 @@ def run_avggenes(fname, settings, plus, minus, gff, path_start, path_stop):
         
         if next_gene != 'no':
             if nextgene['distance'] < next_gene: 
-                #Sprint nextgene['distance'], alias, nextgene['alias']
+                #print nextgene['distance'], alias, nextgene['alias']
                 excluded_genes['too_close'][0] += 1
                 excluded_genes['too_close'][1].append(alias)
                 excluded_genes['too_close'][1].append(nextgene['alias'])
                 continue
                 
         #exclude genes that are not CDS
+        '''feat_type = 'CDS'
         if feat_type != 'CDS':
             excluded_genes['type'][1].append(alias)
             excluded_genes['type'][0] += 1
-            continue
+            continue'''
         
         #exclude genes that are too small    
         if genelength < length_in_ORF :  
@@ -966,21 +967,11 @@ def run_pausescore(fname, settings, plus, minus, gff, path_pausescore):
     excluded_genes['not_divisible'] = [0, []]
     # count included genes
     included_genes = [0, []]
-    
-    
-    
-    list_location = '/Volumes/HDD/Ribo_seq/libraries/analysis/reference_information/Workbook1.csv'
-    
-    infile = pd.read_csv(list_location)
-    TE_list = infile['yeaR'].tolist()
         
     '''iterate through every annotated gene to get codon density info:'''
     
     for alias, start, stop, strand, sequence in itertools.izip(alias_list, start_list,stop_list, strand_list, seq_list):
-        
-        if not alias in TE_list:
-            continue
-        
+
         
         ''' define start and stop positions for codons to analyze:
         
