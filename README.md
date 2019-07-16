@@ -1,5 +1,5 @@
 # 2018_Bacterial_Pipeline_riboseq
-  
+Developed by Fuad Mohammad
 Dependencies:
   - Jupyter notebook
   - python 2.7
